@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -22,7 +22,10 @@ import {
   pushRefspec,
   qualityScripts,
   repoUrl,
+  runCommand,
   runRepo,
+  startServer,
+  scanAllApps,
   scanApp,
   selectionAppList,
   serializeState,
@@ -683,6 +686,218 @@ test('updateSelectedApp uses npm install after updates instead of npm ci', async
     );
   } finally {
     await rm(workRoot, { recursive: true, force: true });
+  }
+});
+
+test('scanApp deletes a leftover clone before cloning the base branch', async () => {
+  const workRoot = await mkdtemp(path.join(tmpdir(), 'update-deps-leftover-'));
+  const clonePath = path.join(workRoot, 'checkout-ui');
+  await mkdir(path.join(clonePath, 'dist'), { recursive: true });
+  await writeFile(path.join(clonePath, 'dist', 'package-lock.json'), '{}');
+
+  const run = async (command, args) => {
+    if (command === 'git' && args[0] === 'clone') {
+      const dest = args.at(-1);
+      await mkdir(dest, { recursive: true });
+      await writeFile(path.join(dest, 'package.json'), JSON.stringify({
+        dependencies: { react: '^19.0.0' },
+      }));
+      await writeFile(path.join(dest, 'package-lock.json'), '{}');
+      assert.equal(args.includes('--branch'), true);
+      assert.equal(args[args.indexOf('--branch') + 1], 'main');
+      return { stdout: '', stderr: '', code: 0 };
+    }
+    if (command === 'npm' && args[0] === 'outdated') {
+      const error = new Error('outdated');
+      error.code = 1;
+      error.stdout = JSON.stringify({
+        react: { current: '19.0.0', wanted: '19.1.0', latest: '19.1.0' },
+      });
+      throw error;
+    }
+    return { stdout: '', stderr: '', code: 0 };
+  };
+
+  try {
+    const result = await scanApp({
+      app: 'checkout-ui',
+      gitUrl: template,
+      baseBranch: 'main',
+      timeoutMs: 5000,
+      workRoot,
+      run,
+      signal: AbortSignal.timeout(5000),
+    });
+    assert.equal(result.status, 'ready');
+    assert.equal(result.locks[0].libs[0].name, 'react');
+    await assert.rejects(() => readFile(path.join(clonePath, 'dist', 'package-lock.json')));
+  } finally {
+    await rm(workRoot, { recursive: true, force: true });
+  }
+});
+
+test('scanAllApps never exceeds the concurrency limit', async () => {
+  const workRoot = await mkdtemp(path.join(tmpdir(), 'update-deps-scan-pool-'));
+  let active = 0;
+  let max = 0;
+  const run = async (command, args) => {
+    active += 1;
+    max = Math.max(max, active);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    active -= 1;
+    if (command === 'git' && args[0] === 'clone') {
+      const dest = args.at(-1);
+      await mkdir(dest, { recursive: true });
+      await writeFile(path.join(dest, 'package.json'), JSON.stringify({
+        dependencies: { react: '^19.0.0' },
+      }));
+      await writeFile(path.join(dest, 'package-lock.json'), '{}');
+      return { stdout: '', stderr: '', code: 0 };
+    }
+    if (command === 'npm' && args[0] === 'outdated') {
+      const error = new Error('outdated');
+      error.code = 1;
+      error.stdout = JSON.stringify({
+        react: { current: '19.0.0', wanted: '19.1.0', latest: '19.1.0' },
+      });
+      throw error;
+    }
+    return { stdout: '', stderr: '', code: 0 };
+  };
+
+  try {
+    const results = await scanAllApps({
+      apps: ['a', 'b', 'c'],
+      gitUrl: template,
+      baseBranch: 'main',
+      timeoutMs: 5000,
+      workRoot,
+      concurrency: 2,
+      run,
+      signal: AbortSignal.timeout(5000),
+    });
+    assert.equal(results.length, 3);
+    assert.equal(results.every((result) => result.status === 'ready'), true);
+    assert.equal(max, 2);
+  } finally {
+    await rm(workRoot, { recursive: true, force: true });
+  }
+});
+
+test('updateSelectedApp suffixes the branch when the remote already has today’s name', async () => {
+  const workRoot = await mkdtemp(path.join(tmpdir(), 'update-deps-remote-branch-'));
+  const clonePath = path.join(workRoot, 'checkout-ui');
+  await mkdir(clonePath, { recursive: true });
+  await writeFile(path.join(clonePath, 'package.json'), JSON.stringify({
+    dependencies: { react: '^19.0.0' },
+  }));
+  await writeFile(path.join(clonePath, 'package-lock.json'), '{}');
+
+  const calls = [];
+  const run = async (command, args) => {
+    calls.push([command, args]);
+    if (command === 'git' && args[0] === 'show-ref') {
+      const error = new Error('missing');
+      error.code = 1;
+      throw error;
+    }
+    if (command === 'git' && args[0] === 'ls-remote') {
+      const ref = String(args.at(-1));
+      if (/refs\/heads\/chore\/deps-update-\d{8}$/.test(ref)) {
+        return { stdout: `deadbeef\t${ref}\n`, stderr: '', code: 0 };
+      }
+      return { stdout: '', stderr: '', code: 0 };
+    }
+    if (command === 'git' && args[0] === 'rev-parse') {
+      return { stdout: 'chore/deps-update-20260927-120000\n', stderr: '', code: 0 };
+    }
+    if (command === 'git' && args[0] === 'status') {
+      return { stdout: ' M package.json\n M package-lock.json\n', stderr: '', code: 0 };
+    }
+    return { stdout: '', stderr: '', code: 0 };
+  };
+
+  try {
+    const result = await updateSelectedApp({
+      app: 'checkout-ui',
+      baseBranch: 'main',
+      timeoutMs: 5000,
+      clonePath,
+      selections: { 'checkout-ui': { 'package-lock.json': ['react'] } },
+      run,
+      signal: AbortSignal.timeout(5000),
+    });
+    assert.equal(result.status, 'pushed');
+    const created = calls.find((call) => call[0] === 'git' && call[1][0] === 'checkout' && call[1][1] === '-b');
+    assert.match(created[1][2], /^chore\/deps-update-\d{8}-\d{6}$/);
+    const push = calls.find((call) => call[0] === 'git' && call[1][0] === 'push');
+    assert.match(push[1].at(-1), /^HEAD:refs\/heads\/chore\/deps-update-\d{8}-\d{6}$/);
+    assert.equal(push[1].includes('--force'), false);
+  } finally {
+    await rm(workRoot, { recursive: true, force: true });
+  }
+});
+
+test('runCommand reports cancel and timeout separately', async () => {
+  const cancel = new AbortController();
+  cancel.abort();
+  await assert.rejects(
+    runCommand(process.execPath, ['-e', '0'], { signal: cancel.signal }),
+    /cancelled/,
+  );
+
+  const controller = new AbortController();
+  const pending = runCommand(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+    signal: controller.signal,
+  });
+  controller.abort();
+  await assert.rejects(pending, /cancelled/);
+
+  await assert.rejects(
+    runCommand(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+      signal: AbortSignal.timeout(30),
+    }),
+    /timed out/,
+  );
+});
+
+test('serve shutdown removes a temporary work dir and keeps a user work dir', async () => {
+  const quiet = { write() {} };
+
+  const tempRoot = await mkdtemp(path.join(tmpdir(), 'update-deps-temp-'));
+  const tempServer = await startServer({
+    gitUrl: template,
+    baseBranch: 'main',
+    apps: [],
+    concurrency: 1,
+    includePins: false,
+    timeoutMs: 1000,
+    port: 0,
+    workRoot: tempRoot,
+    createdTemp: true,
+    stderr: quiet,
+  });
+  await tempServer.shutdown();
+  await assert.rejects(() => access(tempRoot));
+
+  const keptRoot = await mkdtemp(path.join(tmpdir(), 'update-deps-kept-'));
+  const keptServer = await startServer({
+    gitUrl: template,
+    baseBranch: 'main',
+    apps: [],
+    concurrency: 1,
+    includePins: false,
+    timeoutMs: 1000,
+    port: 0,
+    workRoot: keptRoot,
+    createdTemp: false,
+    stderr: quiet,
+  });
+  try {
+    await keptServer.shutdown();
+    await access(keptRoot);
+  } finally {
+    await rm(keptRoot, { recursive: true, force: true });
   }
 });
 

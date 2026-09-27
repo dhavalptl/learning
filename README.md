@@ -16,7 +16,7 @@ For each app repo:
 4. Updates selected packages (CLI: all outdated; UI: user selection)
 5. Runs `lint` / `test` / `build` when those scripts exist
 6. Commits and pushes a new branch: `chore/deps-update-YYYYMMDD`  
-   (never onto `main`, `master`, or the configured base branch)
+   (a clock suffix is added when that name already exists locally or on the remote; never onto `main`, `master`, or the configured base branch)
 
 ---
 
@@ -71,7 +71,7 @@ update-deps \
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--include-pins` | off | Also move exact pins (`1.2.3`) to newest same-major via `npm view` + exact install |
-| `--concurrency <n>` | `3` | How many apps update in parallel |
+| `--concurrency <n>` | `3` | How many apps scan or update at once |
 | `--timeout <ms>` | `1200000` | Per-app time budget |
 | `--work-dir <path>` | temp dir | Where clones live |
 | `--dry-run` | off | Plan updates only; no write / check / commit / push |
@@ -114,7 +114,7 @@ Same shared flags as CLI, plus:
 ### UI behavior
 
 **Startup (scan)**  
-- Clones **all** apps **in parallel** (concurrency flag is **not** used here)  
+- Clones apps with the same `--concurrency` cap used for updates. A leftover app folder is deleted first, then cloned from the base branch  
 - Builds inventory: app → lockfile path → libs (`current` → `available`)  
 - Streams progress over SSE so the inventory fills in live  
 
@@ -189,7 +189,7 @@ package.json
 ```text
 CLI path:   parseCli → mapPool(concurrency) → runRepo → summarize
 UI path:    parseCli(serve) → startServer
-              ├─ scanAllApps (parallel, no concurrency cap)
+              ├─ scanAllApps (mapPool concurrency, fresh base-branch clone)
               ├─ POST /api/run → mapPool(concurrency) → updateSelectedApp
               └─ POST /api/rescan → rescanApp (rm clone + scanApp)
 ```

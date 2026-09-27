@@ -300,18 +300,20 @@ function renderInventory() {
     const body = document.createElement('div');
     body.className = 'app-body';
 
+    const locksWithUpdates = (app.locks ?? []).filter((lock) => (lock.libs ?? []).length > 0);
+
     if (app.status === 'failed') {
       const note = document.createElement('pre');
       note.className = 'app-error';
       note.textContent = app.message || 'Scan failed for this app. Open Logs for details.';
       body.append(note);
-    } else if ((app.locks ?? []).length === 0) {
+    } else if (locksWithUpdates.length === 0) {
       const note = document.createElement('p');
       note.className = 'muted-note';
       note.textContent = app.status === 'ready' ? 'No outdated packages.' : 'Scanning…';
       body.append(note);
     } else {
-      for (const lock of app.locks) {
+      for (const lock of locksWithUpdates) {
         body.append(renderLock(app, lock, canSelect));
       }
     }
