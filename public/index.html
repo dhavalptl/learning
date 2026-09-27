@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Update Deps</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="shell">
+    <header class="top">
+      <div class="brand-block">
+        <h1 class="brand">Update Deps</h1>
+        <p class="tagline">Select packages across apps, then update with live progress.</p>
+      </div>
+      <div class="meta" id="meta">
+        <span class="badge badge-status badge-warn" id="phase-pill" data-tone="warn">Connecting</span>
+        <span class="badge badge-info" id="meta-apps" hidden></span>
+        <span class="badge badge-info" id="meta-concurrency" hidden></span>
+        <button type="button" class="btn btn-secondary btn-toggle" id="logs-toggle" aria-pressed="false">
+          Logs
+        </button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="panel inventory" aria-label="Apps and packages">
+        <div class="panel-head">
+          <h2>Inventory</h2>
+          <p id="inventory-hint">Cloning apps and reading outdated packages…</p>
+        </div>
+        <div id="apps" class="apps"></div>
+      </section>
+
+      <aside class="panel progress" aria-label="Update progress">
+        <div class="panel-head">
+          <h2>Progress</h2>
+          <p id="progress-hint">Submit a selection to start an update job.</p>
+        </div>
+        <div id="job-apps" class="job-apps"></div>
+      </aside>
+    </main>
+
+    <section class="panel logs is-hidden" id="logs-panel" aria-label="Server logs" hidden>
+      <div class="panel-head logs-head">
+        <div>
+          <h2>Logs</h2>
+          <p>Live server activity and errors (also printed to the terminal).</p>
+        </div>
+        <button type="button" class="btn btn-secondary" id="clear-logs-btn">Clear logs</button>
+      </div>
+      <pre id="log-view" class="log-view" aria-live="polite"></pre>
+    </section>
+
+    <footer class="bar">
+      <span id="selection-count">0 packages selected</span>
+      <div class="bar-actions">
+        <button type="button" class="btn btn-secondary" id="clear-btn" disabled>Clear</button>
+        <button type="button" class="btn btn-secondary" id="cancel-btn" hidden>Cancel</button>
+        <button type="button" class="btn btn-primary" id="run-btn" disabled>Update selected</button>
+      </div>
+    </footer>
+  </div>
+  <script src="/app.js" type="module"></script>
+</body>
+</html>

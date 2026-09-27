@@ -1,0 +1,31 @@
+{
+  "name": "update-deps",
+  "version": "1.0.0",
+  "description": "Update npm dependencies across app repos from the CLI or a local UI server.",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "update-deps": "./bin/update-deps.mjs"
+  },
+  "exports": {
+    ".": "./update-deps.mjs",
+    "./lib/core": "./lib/core.mjs",
+    "./lib/scan": "./lib/scan.mjs",
+    "./lib/update": "./lib/update.mjs",
+    "./lib/server": "./lib/server.mjs"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "public",
+    "update-deps.mjs",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test update-deps.test.mjs",
+    "start": "node bin/update-deps.mjs serve"
+  },
+  "license": "UNLICENSED"
+}
